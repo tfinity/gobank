@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -18,7 +19,8 @@ func (s *APIServer) Run() {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/account", makeHTTPhandler(s.handleAccount))
-	router.HandleFunc("/account/{id}", makeHTTPhandler(s.handleGetAccountById))
+	router.HandleFunc("/account/{id}", makeHTTPhandler(s.handleAccountById))
+	router.HandleFunc("/transfer", makeHTTPhandler(s.handleTransfer))
 
 	log.Println("JSON Api server running on port ", s.listenAddr)
 
@@ -43,6 +45,18 @@ func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error 
 
 }
 
+func (s *APIServer) handleAccountById(w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case "GET":
+		return s.handleGetAccountById(w, r)
+	case "DELETE":
+		return s.handleDeleteAccount(w, r)
+	default:
+		return fmt.Errorf("method not allowed %s", r.Method)
+	}
+
+}
+
 func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
 	account, err := s.store.GetAccounts()
 	if err != nil {
@@ -52,9 +66,16 @@ func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) err
 }
 
 func (s *APIServer) handleGetAccountById(w http.ResponseWriter, r *http.Request) error {
-	account := NewAccount("Talha", "Riaz")
-	vars := mux.Vars(r)
-	fmt.Println(vars["id"])
+
+	id, err := getIdFromRequest(r)
+	if err != nil {
+		return err
+	}
+	account, err := s.store.GetAccountByID(id)
+	if err != nil {
+		return err
+	}
+
 	return WriteJson(w, http.StatusOK, account)
 }
 
@@ -72,11 +93,23 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	id, err := getIdFromRequest(r)
+	if err != nil {
+		return err
+	}
+	if err := s.store.DeleteAccount(id); err != nil {
+		return err
+	}
+	return WriteJson(w, http.StatusOK, map[string]int{"deleted": id})
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	transferReq := new(TranserRequest)
+	if err := json.NewDecoder(r.Body).Decode(transferReq); err != nil {
+		return err
+	}
+
+	return WriteJson(w, http.StatusOK, transferReq)
 }
 
 func WriteJson(w http.ResponseWriter, status int, v any) error {
@@ -88,7 +121,7 @@ func WriteJson(w http.ResponseWriter, status int, v any) error {
 type apiFunc func(http.ResponseWriter, *http.Request) error
 
 type ApiError struct {
-	Error string
+	Error string `json:"error"`
 }
 
 func makeHTTPhandler(f apiFunc) http.HandlerFunc {
@@ -98,4 +131,16 @@ func makeHTTPhandler(f apiFunc) http.HandlerFunc {
 			WriteJson(w, http.StatusBadRequest, ApiError{Error: err.Error()})
 		}
 	}
+}
+
+func getIdFromRequest(r *http.Request) (int, error) {
+	idStr := mux.Vars(r)["id"]
+	id, err := strconv.Atoi(idStr)
+
+	if err != nil {
+		return id, fmt.Errorf("invalid id given %s", err)
+	}
+
+	return id, nil
+
 }
